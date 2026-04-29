@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  zt-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: zt-ai-gateway
+    restart: unless-stopped
+    ports:
+      - "8003:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://zt_user:zt_pass@postgres:5432/zt_db
+      - REDIS_URL=redis://:zt_redis_pass@redis:6379/0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_MODEL=claude-3-5-sonnet-20241022
+      - LLM_PROXY_TIMEOUT=45
+      - API_RATE_LIMIT=30/minute
+      - SESSION_TOKEN_TTL_SECONDS=3600
+      - MAX_PROMPT_CHARS=50000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - zt-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zt_user
+      POSTGRES_PASSWORD: zt_pass
+      POSTGRES_DB: zt_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - zt-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zt_user -d zt_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: zt-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass zt_redis_pass
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - zt-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "zt_redis_pass", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  zt-network:
+    driver: bridge
